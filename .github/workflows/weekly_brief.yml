@@ -1,0 +1,38 @@
+name: Weekly Trend Brief
+
+on:
+  schedule:
+    # Every Monday at 17:00 UTC (~9 am PT standard time, ~10 am PT daylight saving)
+    - cron: '0 17 * * 1'
+  # Allow a manual trigger from the Actions tab for testing
+  workflow_dispatch:
+
+jobs:
+  brief:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    # Secrets are injected as environment variables at runtime.
+    # They are never printed in logs and are redacted if accidentally echoed.
+    # The briefings.db file created during the run is discarded after the job
+    # completes — nothing sensitive is committed or persisted.
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
+      DIGEST_EMAIL: ${{ secrets.DIGEST_EMAIL }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run weekly scan and send digest
+        run: python -m agent.agent
