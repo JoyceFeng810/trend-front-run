@@ -76,7 +76,7 @@ Return ONLY valid JSON — no markdown, no prose, no explanation:
 SECTOR_PROMPTS: dict[str, str] = {
     "beauty": (  # key matches dashboard sector IDs
         "Search the web for the top 2-3 viral beauty and skincare brand moments from "
-        "the past 7 days on TikTok, YouTube, and Reddit. Focus on: product launches "
+        "the past 30 days on TikTok, YouTube, and Reddit. Focus on: product launches "
         "going viral, creator-driven ingredient trends (retinol, SPF, peptides, "
         "niacinamide), hero-product moments, and brand sentiment shifts. Target "
         "publicly traded parent companies: L'Oréal (EPA:OR), Estée Lauder (NYSE:EL), "
@@ -86,7 +86,7 @@ SECTOR_PROMPTS: dict[str, str] = {
     ),
     "fashion": (
         "Search the web for the top 2-3 viral fashion and apparel brand moments from "
-        "the past 7 days on TikTok, YouTube, and Reddit. Focus on: streetwear drops, "
+        "the past 30 days on TikTok, YouTube, and Reddit. Focus on: streetwear drops, "
         "viral fits, aesthetic micro-trends (e.g., mob wife, clean girl, gorpcore), "
         "and resale market signals (StockX velocity, GOAT listings). Target publicly "
         "traded companies: LVMH (EPA:MC), Kering (EPA:KER), Tapestry (NYSE:TPR), "
@@ -96,7 +96,7 @@ SECTOR_PROMPTS: dict[str, str] = {
     ),
     "tech": (
         "Search the web for the top 2-3 viral consumer technology product moments from "
-        "the past 7 days on TikTok, YouTube, and Reddit. Focus on: unboxing viral "
+        "the past 30 days on TikTok, YouTube, and Reddit. Focus on: unboxing viral "
         "moments, app download spikes on App Store / Play Store charts, gadget reviews "
         "going viral, AI product launches, and consumer electronics buzz. Target "
         "publicly traded companies: Apple (NASDAQ:AAPL), Meta (NASDAQ:META), "
@@ -106,7 +106,7 @@ SECTOR_PROMPTS: dict[str, str] = {
     ),
     "fintech": (
         "Search the web for the top 2-3 viral fintech and personal finance brand moments "
-        "from the past 7 days on TikTok, YouTube, and Reddit. Focus on: viral money-tip "
+        "from the past 30 days on TikTok, YouTube, and Reddit. Focus on: viral money-tip "
         "videos naming specific apps, BNPL trend spikes, crypto sentiment shifts, "
         "neobank buzz, and investment app adoption. Target publicly traded companies: "
         "PayPal (NASDAQ:PYPL), Block (NYSE:SQ), SoFi (NASDAQ:SOFI), "
@@ -116,7 +116,7 @@ SECTOR_PROMPTS: dict[str, str] = {
     ),
     "wellness": (
         "Search the web for the top 2-3 viral health and wellness brand moments from "
-        "the past 7 days on TikTok, YouTube, and Reddit. Focus on: supplement trends "
+        "the past 30 days on TikTok, YouTube, and Reddit. Focus on: supplement trends "
         "going viral, fitness equipment moments, biohacking trends (continuous glucose "
         "monitors, red-light therapy), wellness app adoption, and mental health platform "
         "buzz. Target publicly traded companies: Hims & Hers (NYSE:HIMS), "
@@ -178,11 +178,12 @@ def _parse_response(content: list, sector: str) -> tuple[list[dict], str]:
 # ---------------------------------------------------------------------------
 
 
-def scan_sector(client: anthropic.Anthropic, sector: str) -> list[dict]:
+def scan_sector(client: anthropic.Anthropic, sector: str, run_date: str) -> list[dict]:
     """Run a web-search-powered trend scan for one sector."""
     print(f"  Scanning {sector}...")
 
-    messages: list[dict] = [{"role": "user", "content": SECTOR_PROMPTS[sector]}]
+    user_content = f"Today is {run_date}.\n\n{SECTOR_PROMPTS[sector]}"
+    messages: list[dict] = [{"role": "user", "content": user_content}]
 
     # Agentic loop: handles pause_turn from server-side tool iteration limits
     while True:
@@ -210,7 +211,7 @@ def scan_sector(client: anthropic.Anthropic, sector: str) -> list[dict]:
         if response.stop_reason == "pause_turn":
             # Server-side tool hit its iteration cap; re-send to continue
             messages = [
-                {"role": "user", "content": SECTOR_PROMPTS[sector]},
+                {"role": "user", "content": user_content},
                 {"role": "assistant", "content": response.content},
             ]
             continue
@@ -228,7 +229,7 @@ def scan_sector(client: anthropic.Anthropic, sector: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
-def run_weekly_scan() -> tuple[list[dict], str]:
+def run_weekly_scan(run_date: str) -> tuple[list[dict], str]:
     """Run all five sector scans. Returns (signals sorted by score, macro_note)."""
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
@@ -240,7 +241,7 @@ def run_weekly_scan() -> tuple[list[dict], str]:
 
     for sector in SECTOR_PROMPTS:
         try:
-            signals, note = scan_sector(client, sector)
+            signals, note = scan_sector(client, sector, run_date)
             all_signals.extend(signals)
             if note and not macro_note:
                 macro_note = note  # keep the first non-empty macro note
@@ -263,7 +264,7 @@ def main() -> None:
     storage.init_db()
 
     print("Running 5-sector scan...")
-    signals, macro_note = run_weekly_scan()
+    signals, macro_note = run_weekly_scan(run_date)
     print(f"Scan complete: {len(signals)} signal(s)")
 
     if not signals:
