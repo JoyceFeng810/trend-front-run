@@ -327,7 +327,10 @@ def send_digest(briefing: dict) -> None:
     api_key = os.environ.get("SENDGRID_API_KEY")
     digest_email = os.environ.get("DIGEST_EMAIL")
     # FROM_EMAIL should be your domain-authenticated address e.g. brief@yourdomain.com
-    from_email = os.environ.get("FROM_EMAIL")
+    # In send_digest(), replace the FROM_EMAIL block with:
+    from_email = os.environ.get("FROM_EMAIL") or os.environ.get("DIGEST_EMAIL")
+    if not from_email:
+        raise RuntimeError("DIGEST_EMAIL not set")
 
     if not api_key:
         raise RuntimeError("SENDGRID_API_KEY not set")
