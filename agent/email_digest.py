@@ -5,7 +5,7 @@ import os
 from datetime import datetime
 
 import sendgrid
-from sendgrid.helpers.mail import Mail
+from sendgrid.helpers.mail import Mail, Header, Content, MimeType
 
 
 SECTOR_LABELS: dict[str, str] = {
@@ -31,6 +31,36 @@ SOURCE_COLORS: dict[str, str] = {
     "Google Trends": "#4285f4",
     "News": "#94a3b8",
 }
+
+# Words that spam filters penalize in subject lines
+_SUBJECT_BLOCKLIST = [
+    "panic", "viral", "crash", "crisis", "urgent", "breaking",
+    "explode", "surge", "alert", "warning", "scandal", "toxic",
+    "benzene", "recall", "danger",
+]
+
+
+def _safe_subject(signals: list[dict], formatted_date: str) -> str:
+    """Build a subject line that avoids spam-trigger words."""
+    sectors = list({s.get("sector", "") for s in signals if s.get("sector")})
+    sector_labels = [SECTOR_LABELS.get(s, s).split("&")[0].strip() for s in sectors[:3]]
+    count = len(signals)
+
+    # Try to use the top signal brand name (safe) instead of its title (can be alarming)
+    top_brand = ""
+    if signals:
+        top_brand = signals[0].get("brand", "")
+
+    if top_brand:
+        subject = f"📡 Trend Brief · {formatted_date} · {top_brand} + {count - 1} more signals"
+    else:
+        subject = f"📡 Trend Brief · {formatted_date} · {count} signals across {', '.join(sector_labels)}"
+
+    # Strip any blocklisted words that snuck in
+    for word in _SUBJECT_BLOCKLIST:
+        subject = subject.replace(word, "").replace(word.title(), "").replace(word.upper(), "")
+
+    return subject.strip()
 
 
 def _score_color(score: int) -> str:
@@ -60,7 +90,7 @@ def _signal_card(signal: dict) -> str:
     brand = html_lib.escape(signal.get("brand") or "")
     raw_ticker = signal.get("ticker") or ""
     stage = html_lib.escape(signal.get("stage") or "Unknown")
-    score = int(signal.get("trend_score") or 0)
+    score = int(signal.get("camelio_score") or signal.get("trend_score") or 0)
     signal_text = html_lib.escape(signal.get("signal") or "")
     catalyst = html_lib.escape(signal.get("catalyst") or "")
     risk = html_lib.escape(signal.get("risk") or "")
@@ -133,6 +163,35 @@ def _signal_card(signal: dict) -> str:
 </table>"""
 
 
+def render_plain_text(signals: list[dict], formatted_date: str, macro_note: str = "") -> str:
+    """Plain-text fallback — improves deliverability when included alongside HTML."""
+    lines = [
+        f"TREND INTELLIGENCE BRIEF — {formatted_date}",
+        "=" * 50,
+        "",
+    ]
+    if macro_note:
+        lines += [f"MACRO: {macro_note}", ""]
+
+    for i, s in enumerate(signals, 1):
+        lines += [
+            f"{i}. {s.get('title', 'Untitled')} [{s.get('stage', '')}]",
+            f"   Brand: {s.get('brand', '')}  |  Ticker: {s.get('ticker', 'N/A')}",
+            f"   Score: {s.get('camelio_score') or s.get('trend_score', '?')}/10",
+            f"   Signal: {s.get('signal', '')}",
+            f"   Catalyst: {s.get('catalyst', '')}",
+            f"   Risk: {s.get('risk', '')}",
+            "",
+        ]
+
+    lines += [
+        "-" * 50,
+        "Not investment advice. For informational purposes only.",
+        "To unsubscribe, reply with UNSUBSCRIBE in the subject.",
+    ]
+    return "\n".join(lines)
+
+
 def render_html(signals: list[dict], run_date: str, macro_note: str = "") -> str:
     by_sector: dict[str, list[dict]] = {s: [] for s in SECTOR_ORDER}
     for signal in signals:
@@ -170,7 +229,7 @@ def render_html(signals: list[dict], run_date: str, macro_note: str = "") -> str
     sector_count = sum(1 for s in SECTOR_ORDER if by_sector[s])
 
     return f"""<!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
@@ -247,12 +306,13 @@ def render_html(signals: list[dict], run_date: str, macro_note: str = "") -> str
             </td>
           </tr>
 
-          <!-- Footer -->
+          <!-- Footer with unsubscribe -->
           <tr>
             <td style="padding:20px 16px;text-align:center;font-size:11px;
                        color:#9ca3af;line-height:1.7;">
               Signals surface TikTok, YouTube, and Reddit viral catalysts before Wall Street.<br>
-              <strong>Not investment advice.</strong> For informational purposes only.
+              <strong>Not investment advice.</strong> For informational purposes only.<br>
+              To unsubscribe, reply with UNSUBSCRIBE in the subject line.
             </td>
           </tr>
 
@@ -264,41 +324,56 @@ def render_html(signals: list[dict], run_date: str, macro_note: str = "") -> str
 </html>"""
 
 
-def send_digest(signals: list[dict], run_date: str, macro_note: str = "") -> None:
+def send_digest(briefing: dict) -> None:
     api_key = os.environ.get("SENDGRID_API_KEY")
     digest_email = os.environ.get("DIGEST_EMAIL")
-    from_email = os.environ.get("FROM_EMAIL") or digest_email
+    # FROM_EMAIL should be your domain-authenticated address e.g. brief@yourdomain.com
+    from_email = os.environ.get("FROM_EMAIL")
 
     if not api_key:
-        raise RuntimeError("SENDGRID_API_KEY environment variable not set")
+        raise RuntimeError("SENDGRID_API_KEY not set")
     if not digest_email:
-        raise RuntimeError("DIGEST_EMAIL environment variable not set")
+        raise RuntimeError("DIGEST_EMAIL not set")
+    if not from_email:
+        raise RuntimeError(
+            "FROM_EMAIL not set — set this to your SendGrid-authenticated sender address "
+            "(e.g. brief@yourdomain.com). Do NOT use a Gmail address here."
+        )
+
+    signals = briefing.get("signals", [])
+    run_date = briefing.get("timestamp", datetime.now().isoformat())
+    macro_note = briefing.get("macro_note", "")
 
     try:
-        formatted_date = datetime.fromisoformat(run_date).strftime("%B %d, %Y")
+        formatted_date = datetime.fromisoformat(run_date).strftime("%b %d, %Y")
     except ValueError:
         formatted_date = run_date
 
-    top = signals[0] if signals else None
-    subject = (
-        f"Trend Brief — {formatted_date} | {top['title']}"
-        if top
-        else f"Trend Intelligence Brief — {formatted_date}"
-    )
+    subject = _safe_subject(signals, formatted_date)
+    html_body = render_html(signals, run_date, macro_note)
+    plain_body = render_plain_text(signals, formatted_date, macro_note)
 
-    message = Mail(
-        from_email=from_email,
-        to_emails=digest_email,
-        subject=subject,
-        html_content=render_html(signals, run_date, macro_note),
-    )
+    message = Mail(from_email=from_email, to_emails=digest_email)
+    message.subject = subject
+
+    # Both plain-text and HTML parts — improves deliverability
+    message.content = [
+        Content(MimeType.text, plain_body),
+        Content(MimeType.html, html_body),
+    ]
+
+    # List-Unsubscribe header — required by Gmail for automated senders since 2024
+    message.header = [
+        Header("List-Unsubscribe", f"<mailto:{from_email}?subject=UNSUBSCRIBE>"),
+        Header("List-Unsubscribe-Post", "List-Unsubscribe=One-Click"),
+        Header("X-Mailer", "trend-front-run/1.0"),
+    ]
 
     sg = sendgrid.SendGridAPIClient(api_key=api_key)
     response = sg.send(message)
 
     if response.status_code not in (200, 201, 202):
-        raise RuntimeError(
-            f"SendGrid returned unexpected status {response.status_code}"
-        )
+        raise RuntimeError(f"SendGrid returned {response.status_code}")
 
-    print(f"Email sent to {digest_email} (HTTP {response.status_code})")
+    print(f"✉️  Email sent to {digest_email} (HTTP {response.status_code})")
+    print(f"   Subject: {subject}")
