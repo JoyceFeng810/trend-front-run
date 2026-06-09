@@ -39,7 +39,6 @@ _SUBJECT_BLOCKLIST = [
     "benzene", "recall", "danger",
 ]
 
-
 def _safe_subject(signals: list[dict], formatted_date: str) -> str:
     """Build a subject line that avoids spam-trigger words."""
     sectors = list({s.get("sector", "") for s in signals if s.get("sector")})
