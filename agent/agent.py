@@ -275,7 +275,7 @@ def main() -> None:
     storage.save_signals(run_id, run_date, signals)
     print("Signals saved to briefings.db")
 
-    email_digest.send_digest(signals, run_date, macro_note)
+    email_digest.send_digest({"signals": signals, "timestamp": run_date, "macro_note": macro_note})
 
 
 if __name__ == "__main__":
