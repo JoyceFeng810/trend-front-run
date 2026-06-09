@@ -89,7 +89,7 @@ def _signal_card(signal: dict) -> str:
     brand = html_lib.escape(signal.get("brand") or "")
     raw_ticker = signal.get("ticker") or ""
     stage = html_lib.escape(signal.get("stage") or "Unknown")
-    score = int(signal.get("camelio_score") or signal.get("trend_score") or 0)
+    score = int(signal.get("trend_score") or 0)
     signal_text = html_lib.escape(signal.get("signal") or "")
     catalyst = html_lib.escape(signal.get("catalyst") or "")
     risk = html_lib.escape(signal.get("risk") or "")
